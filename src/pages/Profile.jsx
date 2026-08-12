@@ -28,6 +28,7 @@ export default function Profile() {
     const [searched, setSearched] = useState(false);
     const [completedEvents, setCompletedEvents] = useState(new Set());
     const profileRef = useRef(null);
+    const [certificateAssets, setCertificateAssets] = useState(null);
     
     const appName = localStorage.getItem("branding_appName") || "HAMARTIA";
 
@@ -44,6 +45,34 @@ export default function Profile() {
             }
         };
         fetchCompleted();
+
+        // Preload certificate assets
+        const preloadAssets = async () => {
+            const loadImageBase64 = async (src) => {
+                try {
+                    const response = await fetch(src);
+                    const blob = await response.blob();
+                    return new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.onerror = () => resolve(null);
+                        reader.readAsDataURL(blob);
+                    });
+                } catch (e) {
+                    console.error("Failed to preload asset", src, e);
+                    return null;
+                }
+            };
+
+            const [themeImg, logoImg, compassImg] = await Promise.all([
+                loadImageBase64('/certificate-theme.jpg'),
+                loadImageBase64('/hamartia-logo.png'),
+                loadImageBase64('/compass-watermark.png')
+            ]);
+
+            setCertificateAssets({ themeImg, logoImg, compassImg });
+        };
+        preloadAssets();
     }, []);
 
     const getTeamColor = (teamName) => {
@@ -353,9 +382,11 @@ export default function Profile() {
                                                                                 chestNo: chestNumber.toUpperCase(),
                                                                                 eventName: res.eventName,
                                                                                 place: res.place,
+                                                                                grade: res.grade,
                                                                                 team: res.team,
                                                                                 appName: appName,
-                                                                                date: res.timestamp?.toDate().toLocaleDateString()
+                                                                                date: res.timestamp?.toDate().toLocaleDateString(),
+                                                                                assets: certificateAssets
                                                                             });
                                                                         }}
                                                                         style={{

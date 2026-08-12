@@ -121,6 +121,53 @@ function Dashboard() {
         };
     }, [navigate]);
 
+    // Global Drag-to-Scroll delegator for .admin-table-container
+    useEffect(() => {
+        const handleMouseDown = (e) => {
+            const container = e.target.closest('.admin-table-container');
+            if (!container) return;
+
+            // Don't drag-scroll if clicking on buttons, inputs, links, select or options
+            const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'A', 'TEXTAREA', 'OPTION'];
+            if (interactiveTags.includes(e.target.tagName) || e.target.closest('button, input, select, a, textarea')) {
+                return;
+            }
+
+            let isDown = true;
+            const startX = e.pageX - container.offsetLeft;
+            const scrollLeft = container.scrollLeft;
+
+            container.style.cursor = 'grabbing';
+            container.style.userSelect = 'none';
+
+            const handleMouseMove = (moveEvent) => {
+                if (!isDown) return;
+                moveEvent.preventDefault();
+                const x = moveEvent.pageX - container.offsetLeft;
+                const walk = (x - startX) * 1.5;
+                container.scrollLeft = scrollLeft - walk;
+            };
+
+            const handleMouseUpOrLeave = () => {
+                isDown = false;
+                container.style.cursor = '';
+                container.style.userSelect = '';
+                window.removeEventListener('mousemove', handleMouseMove);
+                window.removeEventListener('mouseup', handleMouseUpOrLeave);
+                window.removeEventListener('mouseleave', handleMouseUpOrLeave);
+            };
+
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUpOrLeave);
+            window.addEventListener('mouseleave', handleMouseUpOrLeave);
+        };
+
+        window.addEventListener('mousedown', handleMouseDown);
+        return () => {
+            window.removeEventListener('mousedown', handleMouseDown);
+        };
+    }, []);
+
     const handleLogout = async () => {
         await signOut(auth);
         navigate("/");
