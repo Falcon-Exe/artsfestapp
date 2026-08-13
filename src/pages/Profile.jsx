@@ -64,13 +64,9 @@ export default function Profile() {
                 }
             };
 
-            const [themeImg, logoImg, compassImg] = await Promise.all([
-                loadImageBase64('/certificate-theme.jpg'),
-                loadImageBase64('/hamartia-logo.png'),
-                loadImageBase64('/compass-watermark.png')
-            ]);
-
-            setCertificateAssets({ themeImg, logoImg, compassImg });
+            const timestamp = Date.now();
+            const themeImg = await loadImageBase64(`/certificate-theme.jpg?v=${timestamp}`);
+            setCertificateAssets({ themeImg });
         };
         preloadAssets();
     }, []);

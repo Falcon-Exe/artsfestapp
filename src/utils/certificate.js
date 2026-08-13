@@ -19,11 +19,42 @@ const loadImageBase64 = async (src) => {
     }
 };
 
-export const generateCertificate = (data) => {
-    const { studentName, chestNo, eventName, place, grade, team, appName, date, assets } = data;
-    const { themeImg, logoImg, compassImg } = assets || {};
+const setFontSafe = (doc, fontName, fontStyle, fallbackFont = "times") => {
+    try {
+        doc.setFont(fontName, fontStyle);
+    } catch (e) {
+        doc.setFont(fallbackFont, fontStyle);
+    }
+};
 
-    // Create new PDF (Landscape A4)
+export const generateValidationNo = (chestNo, eventName, studentName, validationNo) => {
+    if (validationNo && String(validationNo).trim()) {
+        return String(validationNo).trim().toUpperCase();
+    }
+    const raw = `${chestNo || ''}-${eventName || ''}-${studentName || ''}`;
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) {
+        hash = (hash << 5) - hash + raw.charCodeAt(i);
+        hash |= 0;
+    }
+    const hex = Math.abs(hash).toString(36).toUpperCase().padStart(5, '0');
+    const suffix = String(chestNo || 'X').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return `HAF26-${suffix}-${hex}`;
+};
+
+export const generateCertificate = (data) => {
+    const { studentName, chestNo, eventName, place, grade, team, appName, date, validationNo, certNo, assets } = data || {};
+    const { themeImg } = assets || {};
+
+    // Safe string fallbacks (Full original event name preserved)
+    const safeStudentName = String(studentName || "Participant").trim();
+    const safeChestNo = chestNo ? String(chestNo).trim() : "";
+    const safeEventName = String(eventName || "Event").trim();
+    const safePlace = String(place || "").trim();
+    const safeGrade = grade ? String(grade).trim() : "";
+    const safeTeam = team ? String(team).trim() : "";
+
+    // Create new PDF (Landscape A4: 297mm x 210mm)
     const doc = new jsPDF({
         orientation: "landscape",
         unit: "mm",
@@ -33,127 +64,128 @@ export const generateCertificate = (data) => {
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
-    // 2. Draw Theme Background Pattern
+    // 1. Draw Official Template Background Image
     if (themeImg) {
-        // Draw the full theme image
         doc.addImage(themeImg, 'JPEG', 0, 0, pageWidth, pageHeight);
+    } else {
+        // Fallback cream background
+        doc.setFillColor(250, 239, 207);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
     }
 
-    // 3. Fill Left & Center Area with #faefcf Custom Background
-    // This covers placeholder text of the theme but preserves the right pattern
-    doc.setFillColor(250, 239, 207); // #faefcf
-    const leftPaneWidth = 182;
-    doc.rect(8, 8, leftPaneWidth, pageHeight - 16, 'F');
+    // 2. Certificate Verification Number (Top Right Header: X=175mm, Y=18mm)
+    const validNo = generateValidationNo(safeChestNo, safeEventName, safeStudentName, validationNo || certNo);
+    doc.setTextColor(1, 49, 95); // Color #01315f (RGB 1, 49, 95)
+    doc.setFontSize(8.5);
+    setFontSafe(doc, "CooperBT", "bold", "times");
+    doc.text(validNo, 210, 196);
 
-    // 4. Draw Compass Watermark on the Left Side
-    const centerLeftX = 8 + (leftPaneWidth / 2); // 99mm
-    if (compassImg) {
-        try {
-            // Draw compass watermark with low opacity
-            const gState = new doc.GState({ opacity: 0.06 });
-            doc.saveGraphicsState();
-            doc.setGState(gState);
-            doc.addImage(compassImg, 'PNG', centerLeftX - 55, 105 - 55, 110, 110);
-            doc.restoreGraphicsState();
-        } catch (e) {
-            console.warn("jsPDF GState/opacity is not supported; drawing watermark with fallback", e);
-            // Fallback (draw at full opacity or skip)
-            doc.addImage(compassImg, 'PNG', centerLeftX - 55, 105 - 55, 110, 110);
+    // 3. Student Name (Centered above underline line, Color: #01315f, Font: Canva Student Font / Times, Size: 63.5pt base)
+    setFontSafe(doc, "CanvaStudentFont", "bolditalic", "times");
+    
+    const baseNameFontSize = 63.5;
+    doc.setFontSize(baseNameFontSize);
+
+    // Measure Student Name width at 63.5pt
+    let nameWidth = doc.getTextWidth ? doc.getTextWidth(safeStudentName) : safeStudentName.length * (baseNameFontSize * 0.22);
+    
+    // Max width allowed over the presentation underline line = 135mm
+    const maxNameWidth = 135;
+    let nameFontSize = baseNameFontSize;
+
+    // Scale font size down proportionally if name width exceeds 135mm so long names never overflow
+    if (nameWidth > maxNameWidth) {
+        nameFontSize = baseNameFontSize * (maxNameWidth / nameWidth);
+        doc.setFontSize(nameFontSize);
+        nameWidth = doc.getTextWidth ? doc.getTextWidth(safeStudentName) : safeStudentName.length * (nameFontSize * 0.22);
+    }
+
+    // Calculate exact centered start X position over the underline line (Center X = 86.5mm)
+    const startX = Math.max(20, 86.5 - (nameWidth / 2));
+    doc.text(safeStudentName, startX, 112);
+
+    // 4. Achievement Details Paragraph (Color: #01315f, Font: Cooper BT, Base Size: 15.1pt)
+    doc.setTextColor(1, 49, 95); // Color #01315f (RGB 1, 49, 95)
+
+    const placeFormatted = safePlace ? (safePlace.match(/\d+/) ? `${safePlace} Place` : `${safePlace} Place`) : "Participation";
+    const baseFontSize = 15.1;
+
+    // Define line 1 segments cleanly
+    const seg1 = { text: "For Securing", bold: false };
+    const seg2 = { text: placeFormatted, bold: true };
+    const seg3 = { text: "in the Event", bold: false };
+    const seg4 = { text: safeEventName, bold: true };
+    const seg5 = safeGrade ? { text: "with", bold: false } : null;
+    const seg6 = safeGrade ? { text: `Grade - ${safeGrade.toUpperCase()}`, bold: true } : null;
+    const seg7 = { text: "at", bold: false };
+    const seg8 = { text: "Hamartia Arts Fest 2026–27", bold: true };
+
+    const segments = [seg1, seg2, seg3, seg4, seg5, seg6, seg7, seg8].filter(Boolean);
+
+    // Measure exact space width at 15.1pt
+    doc.setFontSize(baseFontSize);
+    setFontSafe(doc, "CooperBT", "normal", "times");
+    const spaceWidthAt15 = (doc.getTextWidth && doc.getTextWidth("   ") > 0) ? (doc.getTextWidth("   ") / 3) : (baseFontSize * 0.098);
+
+    // Measure line 1 total width including explicit spaceWidthAt15
+    let line1WidthAt15 = 0;
+    segments.forEach((seg, idx) => {
+        setFontSafe(doc, "CooperBT", seg.bold ? "bold" : "normal", "times");
+        seg.width15 = doc.getTextWidth ? doc.getTextWidth(seg.text) : seg.text.length * (baseFontSize * 0.18);
+        line1WidthAt15 += seg.width15;
+        if (idx < segments.length - 1) {
+            line1WidthAt15 += spaceWidthAt15;
         }
+    });
+
+    // Printable width from X=23mm to X=240mm is 217mm.
+    // If line 1 exceeds 217mm, auto-scale line 1 font size so it stays on 1 single clean line!
+    const maxLine1Width = 217;
+    let line1FontSize = baseFontSize;
+    if (line1WidthAt15 > maxLine1Width) {
+        line1FontSize = baseFontSize * (maxLine1Width / line1WidthAt15);
     }
 
-    // 5. Draw Gold Borders & Dividing Line to separate content pane and theme pattern
-    doc.setDrawColor(184, 144, 71); // Gold color #b89047
-    doc.setLineWidth(1.5);
-    doc.rect(8, 8, pageWidth - 16, pageHeight - 16);
-    doc.setLineWidth(0.5);
-    doc.rect(9.5, 9.5, pageWidth - 19, pageHeight - 19);
+    doc.setFontSize(line1FontSize);
+    setFontSafe(doc, "CooperBT", "normal", "times");
+    const spaceWidth = (doc.getTextWidth && doc.getTextWidth("   ") > 0) ? (doc.getTextWidth("   ") / 3) : (line1FontSize * 0.098);
 
-    // Dividing Line
-    doc.setLineWidth(1);
-    doc.line(8 + leftPaneWidth, 8, 8 + leftPaneWidth, pageHeight - 8);
+    const yStart = 135;
+    const lineSpacing = 7.2; // Uniform line spacing throughout
+    let currentX = 23;
+    let currentY = yStart;
 
-    // 6. Draw Logo (Hamartia Logo)
-    if (logoImg) {
-        doc.addImage(logoImg, 'PNG', 18, 16, 50, 20);
-    }
+    // Render Line 1 on 1 single clean line with explicit spaceWidth gaps
+    segments.forEach((seg, idx) => {
+        setFontSafe(doc, "CooperBT", seg.bold ? "bold" : "normal", "times");
+        const w = doc.getTextWidth ? doc.getTextWidth(seg.text) : seg.text.length * (line1FontSize * 0.18);
+        doc.text(seg.text, currentX, currentY);
+        currentX += w;
+        if (idx < segments.length - 1) {
+            currentX += spaceWidth;
+        }
+    });
 
-    // 7. Add Certificate Content Text
-    // Title
-    doc.setTextColor(92, 64, 21); // Dark brown/gold #5c4015
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(28);
-    doc.text("CERTIFICATE OF MERIT", centerLeftX, 60, { align: "center" });
+    // Paragraph body at 15.1pt font size with 7.2mm line spacing
+    doc.setFontSize(baseFontSize);
+    setFontSafe(doc, "CooperBT", "normal", "times");
+    currentY += lineSpacing;
 
-    // Subtitle
-    doc.setTextColor(120, 100, 70);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text("PROUDLY PRESENTED TO", centerLeftX, 70, { align: "center" });
+    const bodyText = "In recognition of your outstanding talent, creativity, and dedication. Your exceptional artistic skills and creative vision have earned you this well-deserved achievement, reflecting your passion and commitment to excellence in art.";
+    
+    // Split body text into individual lines to apply uniform lineSpacing
+    const splitBody = doc.splitTextToSize ? doc.splitTextToSize(bodyText, 215) : [bodyText];
+    splitBody.forEach((line) => {
+        doc.text(line, 23, currentY);
+        currentY += lineSpacing;
+    });
 
-    // Student Name
-    doc.setTextColor(44, 30, 11); // Very dark brown/black #2c1e0b
-    doc.setFont("helvetica", "bolditalic");
-    doc.setFontSize(32);
-    doc.text(studentName.toUpperCase(), centerLeftX, 90, { align: "center" });
-
-    // Underline below Name
-    doc.setDrawColor(184, 144, 71);
-    doc.setLineWidth(0.8);
-    doc.line(centerLeftX - 55, 95, centerLeftX + 55, 95);
-
-    // Recognition Description
-    doc.setTextColor(92, 64, 21);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(13);
-    doc.text("in recognition of achieving", centerLeftX, 108, { align: "center" });
-
-    // Place & Grade
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    doc.setTextColor(145, 56, 49); // Crimson accent color
-    const placeText = `${place.toUpperCase()} PLACE`;
-    const gradeText = grade ? ` | GRADE ${grade.toUpperCase()}` : "";
-    doc.text(`${placeText}${gradeText}`, centerLeftX, 122, { align: "center" });
-
-    // Event
-    doc.setTextColor(92, 64, 21);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(13);
-    doc.text("in the event", centerLeftX, 134, { align: "center" });
-
-    doc.setTextColor(44, 30, 11);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
-    doc.text(eventName.toUpperCase(), centerLeftX, 146, { align: "center" });
-
-    // Chest & Team
-    doc.setTextColor(120, 100, 70);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-    doc.text(`Chest No: ${chestNo}   |   Team: ${team}`, centerLeftX, 158, { align: "center" });
-
-    // 8. Footer (Date and Signature)
-    // Date (Left bottom of content pane)
-    doc.setTextColor(92, 64, 21);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(`Date: ${date || new Date().toLocaleDateString()}`, 20, 185);
-    doc.setDrawColor(184, 144, 71);
-    doc.setLineWidth(0.5);
-    doc.line(20, 180, 70, 180);
-
-    // Signature (Right bottom of content pane)
-    doc.setFont("helvetica", "bold");
-    doc.text("General Convener", 130, 180);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("Arts Festival Committee", 130, 185);
-    doc.setDrawColor(184, 144, 71);
-    doc.setLineWidth(0.5);
-    doc.line(130, 175, 175, 175);
+    // Line 3: Congratulations (at 15.1pt font size with identical line spacing)
+    setFontSafe(doc, "CooperBT", "normal", "times");
+    doc.text("Congratulations on this remarkable achievement!", 23, currentY);
 
     // Save the PDF
-    doc.save(`Certificate_${studentName.replace(/\s+/g, '_')}_${eventName.replace(/\s+/g, '_')}.pdf`);
+    const fileStudent = safeStudentName.replace(/\s+/g, '_');
+    const fileEvent = safeEventName.replace(/\s+/g, '_');
+    doc.save(`Certificate_${fileStudent}_${fileEvent}.pdf`);
 };
-
